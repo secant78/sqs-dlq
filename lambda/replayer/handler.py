@@ -238,10 +238,10 @@ def _replay_one(msg: dict, dry_run: bool, reset_attempts: bool) -> bool:
             # Step 1: Send to main-queue.
             # If this fails, we catch the exception below and return False.
             # The message remains in the DLQ for the next replay invocation.
-            sqs.send_message(
-                QueueUrl=MAIN_QUEUE_URL,
-                MessageBody=send_body,
-                MessageAttributes={
+            send_kwargs: dict = {
+                "QueueUrl": MAIN_QUEUE_URL,
+                "MessageBody": send_body,
+                "MessageAttributes": {
                     # Custom attributes visible to downstream consumers.
                     # The processor Lambda reads MessageAttributeNames=["All"]
                     # but currently ignores these — they exist for observability.
@@ -254,7 +254,15 @@ def _replay_one(msg: dict, dry_run: bool, reset_attempts: bool) -> bool:
                         "DataType": "String",
                     },
                 },
-            )
+            }
+            # FIFO queues require MessageGroupId on every SendMessage call.
+            # Read it from the original message's attributes (present because
+            # _poll_dlq requests AttributeNames=["All"]).
+            if MAIN_QUEUE_URL.endswith(".fifo"):
+                group_id = msg.get("Attributes", {}).get("MessageGroupId", "default")
+                send_kwargs["MessageGroupId"] = group_id
+
+            sqs.send_message(**send_kwargs)
 
             # Step 2: Delete from DLQ only after a successful send.
             # ReceiptHandle is a temporary token SQS gives us to delete

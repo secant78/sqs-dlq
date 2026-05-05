@@ -209,8 +209,21 @@ def direct_replay(
                 send_body = json.dumps(body) if isinstance(body, dict) else msg["Body"]
 
                 if not dry_run:
+                    # Build send kwargs. FIFO queues require MessageGroupId —
+                    # read it from the original message's attributes (returned
+                    # because we requested AttributeNames=["All"]).
+                    send_kwargs: dict = {
+                        "QueueUrl": main_queue_url,
+                        "MessageBody": send_body,
+                    }
+                    if main_queue_url.endswith(".fifo"):
+                        group_id = msg.get("Attributes", {}).get(
+                            "MessageGroupId", "default"
+                        )
+                        send_kwargs["MessageGroupId"] = group_id
+
                     # Send first, then delete — never delete before confirming send.
-                    sqs.send_message(QueueUrl=main_queue_url, MessageBody=send_body)
+                    sqs.send_message(**send_kwargs)
                     sqs.delete_message(
                         QueueUrl=dlq_url, ReceiptHandle=msg["ReceiptHandle"]
                     )
